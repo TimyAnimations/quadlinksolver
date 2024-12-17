@@ -1,0 +1,8 @@
+{
+    "name": "QuadLinkSolver",
+    "creator": "Timy",
+    "version": "1.0.0",
+    "description": "Suggests the best move to make in Quad Link Legacy against Wizardman in the rift",
+    "entry": "index.js",
+    "requires": [""]
+}
