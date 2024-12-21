@@ -1,19 +1,11 @@
 import { getSkyblockItemID, highlightSlot } from "./util";
 
-import "./alternative_algorithm";
-
 const CONTAINER_TITLE = "Quad Link Legacy - Wizardman";
 
-import {
-    PLAYER_PIECE,
-    WIZARD_PIECE,
-    EMPTY,
-    emptyBoard,
-    getNextOpenRow,
-    copyBoard,
-    minimax
-} from "./algorithm";
+import { Board } from "./algorithm/board";
+import { bestMove } from "./algorithm/solver";
 
+// detects when the Quad Link container gui is opened.
 register("guiOpened", (event) => {
     if (!event.gui || !(event.gui.field_147002_h instanceof Java.type("net.minecraft.inventory.ContainerChest"))) 
         return;
@@ -33,6 +25,7 @@ register("guiOpened", (event) => {
     });
 });
 
+// detects when the Quad Link container gui is closed
 const gui_close_trigger = register("guiClosed", (gui) => {
     if (!gui || !(gui.field_147002_h instanceof Java.type("net.minecraft.inventory.ContainerChest")))
         return;
@@ -57,20 +50,6 @@ const gui_close_trigger = register("guiClosed", (gui) => {
 });
 gui_close_trigger.unregister();
 
-const render_slot_trigger = register("renderSlot", (slot) => {
-    const idx = slot.getIndex();
-    if (idx >= 54) return;
-
-    const [x, y] = [slot.getDisplayX() - 1, slot.getDisplayY() - 1];
-    if (idx == best_move_slot) { // highlight best move
-        highlightSlot(x, y, Renderer.color(85, 255, 85, 127), Renderer.color(85, 255, 85));
-    }
-    else if (idx < best_move_slot && idx % 9 == best_move + 1) { // highlight column above best move
-        highlightSlot(x, y, Renderer.color(85, 255, 85, 85));
-    }
-});
-render_slot_trigger.unregister();
-
 var current_board = undefined;
 var current_player_count = 0;
 var current_opponent_count = 0;
@@ -78,27 +57,7 @@ var current_opponent_count = 0;
 var calculating_best_move = false;
 var best_move = undefined;
 var best_move_slot = undefined;
-var depth = 5;
-
-register("command", (arg) => {
-    if (!arg || arg.toLowerCase() == "help") {
-        return ChatLib.chat("&eThe depth is how many moves ahead the algorithm will search.\n"+
-                            "&eLarger depth with take longer to process, but result in a more accurate solution.\n"+
-                            `&aCurrent depth is set to &e${depth}`);
-    }
-    arg = parseInt(arg);
-    if (isNaN(arg)) {
-        return ChatLib.chat("&cError: invalid input");
-    }
-    if (arg < 0) {
-        return ChatLib.chat("&cError: Depth must be positive");
-    }
-    if (arg > 8) {
-        return ChatLib.chat("&cError: Depth must be below 8");
-    }
-    depth = arg;
-    ChatLib.chat(`&aDepth set to &e${depth}`);
-}).setCommandName("quadlinkdepth");
+var depth = 8;
 
 const tick_trigger = register("tick", () => {
     const items = Player.getContainer().getItems();
@@ -108,7 +67,7 @@ const tick_trigger = register("tick", () => {
     if (!opponent_item_id || !player_item_id) 
         return;
     
-    let board = emptyBoard();
+    let board = new Board();
     let player_count = 0;
     let opponent_count = 0;
     
@@ -126,15 +85,13 @@ const tick_trigger = register("tick", () => {
         const peice_id = getSkyblockItemID(item);
         switch (peice_id) {
             case player_item_id:
-                board[row][col] = PLAYER_PIECE;
+                board.setPeiceAt(row, col, false);
                 player_count++;
                 break;
             case opponent_item_id:
-                board[row][col] = WIZARD_PIECE;
+                board.setPeiceAt(row, col, true);
                 opponent_count++;
                 break;
-            default:
-                board[row][col] = EMPTY;
         }
     });
 
@@ -146,6 +103,9 @@ const tick_trigger = register("tick", () => {
     current_opponent_count = opponent_count;
     current_player_count = player_count;
 
+    if (current_opponent_count <= current_player_count)
+        current_board.invert(); 
+
     // reset solution
     best_move = undefined;
     best_move_slot = undefined;
@@ -155,9 +115,8 @@ const tick_trigger = register("tick", () => {
         calculating_best_move = true;
         // use a thread so the game doesn't have to wait for the solution
         new Thread(() => {
-            const board = copyBoard(current_board);
             const player_count = current_player_count;
-            const [this_best_move, _] = minimax(board, depth, -Infinity, Infinity, true);
+            const this_best_move = bestMove(current_board, depth);
             
             // verify that the game state has not changed
             if (player_count !== current_player_count)
@@ -167,17 +126,31 @@ const tick_trigger = register("tick", () => {
             
             calculating_best_move = false;
             if (best_move != undefined) {
-                best_move_slot = best_move + 1 + (getNextOpenRow(board, best_move) * 9);
+                best_move_slot = best_move + 1 + (current_board.dropRow(best_move) * 9);
             }
         }).start();
     }
 });
 tick_trigger.unregister();
 
+const render_slot_trigger = register("renderSlot", (slot) => {
+    const idx = slot.getIndex();
+    if (idx >= 54) return;
+
+    const [x, y] = [slot.getDisplayX() - 1, slot.getDisplayY() - 1];
+    if (idx == best_move_slot) { // highlight best move
+        highlightSlot(x, y, Renderer.color(85, 255, 85, 127), Renderer.color(85, 255, 85));
+    }
+    else if (idx < best_move_slot && idx % 9 == best_move + 1) { // highlight column above best move
+        highlightSlot(x, y, Renderer.color(85, 255, 85, 85));
+    }
+});
+render_slot_trigger.unregister();
+
 const gui_render_trigger = register("guiRender", () => {
     const [center_x, center_y] = [(Renderer.screen.getWidth() / 2), (Renderer.screen.getHeight() / 2)];
 
-    if (best_move) {
+    if (best_move !== undefined) {
         Renderer.drawString(`Solver: &aColumn ${best_move + 1}`, center_x - 84, center_y - 121);
     }
     else if (calculating_best_move) {
@@ -188,3 +161,21 @@ const gui_render_trigger = register("guiRender", () => {
     }
 });
 gui_render_trigger.unregister();
+
+register("command", (arg) => {
+    if (!arg || arg.toLowerCase() == "help") {
+        return ChatLib.chat("&eThe depth is how many moves ahead the algorithm will search.\n"+
+                            "&eLarger depth with take longer to process, but result in a more accurate solution.\n"+
+                            `&aCurrent depth is set to &e${depth}`);
+    }
+    arg = parseInt(arg);
+    if (isNaN(arg)) {
+        return ChatLib.chat("&cError: invalid input");
+    }
+    if (arg < 0) {
+        return ChatLib.chat("&cError: Depth must be positive");
+    }
+
+    depth = arg;
+    ChatLib.chat(`&aDepth set to &e${depth}`);
+}).setCommandName("quadlinksolverdepth");
